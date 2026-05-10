@@ -1,0 +1,169 @@
+name: playwright
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  SHARD_COUNT: 4
+  TIMING_ARTIFACT_NAME: merged-json-report
+
+jobs:
+  build-shard-manifest:
+    runs-on: ubuntu-latest
+    outputs:
+      has-manifest: ${{ steps.manifest.outputs.has_manifest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - run: npm install
+
+      - name: Find latest successful timing report run
+        id: timing_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id="$(
+            gh run list --workflow "${{ github.workflow }}" --status success --limit 50 --json databaseId --jq '.[].databaseId' |
+            while read -r candidate_run_id; do
+              if gh api --paginate "repos/${{ github.repository }}/actions/runs/$candidate_run_id/artifacts" --jq ".artifacts[].name" | grep -Fxq "$TIMING_ARTIFACT_NAME"; then
+                echo "$candidate_run_id"
+                break
+              fi
+            done
+          )"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+
+      - name: Download previous timing report
+        if: ${{ steps.timing_run.outputs.run_id != '' }}
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: ${{ env.TIMING_ARTIFACT_NAME }}
+          path: test-results
+          run-id: ${{ steps.timing_run.outputs.run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Generate current test list
+        if: ${{ hashFiles('test-results/merged-results.json') != '' }}
+        run: npm run test:list
+
+      - name: Build timing-balanced shard manifest
+        if: ${{ hashFiles('test-results/merged-results.json') != '' }}
+        env:
+          TEST_RESULTS_FILE: test-results/merged-results.json
+          TEST_LIST_FILE: test-list.json
+          SHARD_COUNT: ${{ env.SHARD_COUNT }}
+        run: npm run build-shards
+
+      - name: Check manifest
+        id: manifest
+        run: |
+          if [ -f shard-matrix.json ]; then
+            echo "has_manifest=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_manifest=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload shard manifest
+        if: ${{ steps.manifest.outputs.has_manifest == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: shard-matrix
+          path: shard-matrix.json
+          overwrite: true
+          retention-days: 1
+
+  test:
+    needs: build-shard-manifest
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - run: npm install
+
+      - name: Download shard manifest
+        if: ${{ needs.build-shard-manifest.outputs.has-manifest == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: shard-matrix
+          path: .
+
+      - name: Run shard
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          if [ -f shard-matrix.json ]; then
+            npm run run-shard -- --reporter=blob
+          else
+            npm test -- --shard=${{ matrix.shard }}/${{ env.SHARD_COUNT }} --reporter=blob
+          fi
+
+      - name: Upload blob report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: blob-report-${{ matrix.shard }}
+          path: blob-report
+          overwrite: true
+          retention-days: 7
+
+  merge-reports:
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - run: npm install
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-blob-reports
+          pattern: blob-report-*
+          merge-multiple: true
+
+      - name: Merge Playwright reports
+        run: npm run merge-reports
+
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report
+          overwrite: true
+          retention-days: 7
+
+      - name: Upload timing report
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.TIMING_ARTIFACT_NAME }}
+          path: merged-results.json
+          overwrite: true
+          retention-days: 30
+
+      - name: Keep failed tests retryable
+        if: ${{ needs.test.result == 'failure' }}
+        run: exit 1

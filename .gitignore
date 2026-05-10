@@ -1,0 +1,9 @@
+node_modules/
+playwright-report/
+blob-report/
+all-blob-reports/
+test-results/
+shard-matrix.json
+test-list.json
+merged-results.json
+

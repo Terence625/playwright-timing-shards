@@ -1,0 +1,19 @@
+{
+  "name": "playwright-timing-shards-example",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:list": "playwright test --list --reporter=json > test-list.json",
+    "build-shards": "tsx scripts/build-shards.ts",
+    "run-shard": "tsx scripts/run-shard.ts",
+    "merge-reports": "playwright merge-reports --config=merge.config.ts ./all-blob-reports"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
+
