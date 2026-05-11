@@ -111,11 +111,11 @@ jobs:
         env:
           SHARD_INDEX: ${{ matrix.shard }}
         run: |
-          # if [ -f shard-matrix.json ]; then
-          #   npm run run-shard -- --reporter=blob
-          # else
+          if [ -f shard-matrix.json ]; then
+            npm run run-shard -- --reporter=blob
+          else
             npm test -- --shard=${{ matrix.shard }}/${{ env.SHARD_COUNT }} --reporter=blob
-          # fi
+          fi
 
       - name: Upload blob report
         if: ${{ !cancelled() }}
