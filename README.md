@@ -4,6 +4,15 @@ This example shows how to replace Playwright's native file-count sharding with a
 
 Playwright's built-in `--shard=1/4` is simple and reliable, but it does not know that one test file may take 30 seconds while another takes 3 minutes. This example keeps Playwright as the test runner and only adds a small scheduling layer before the test jobs start.
 
+The demo suite intentionally contains 24 artificial wait-based tests ordered from slow to fast. With one worker per shard, Playwright's native count-based split is roughly:
+
+- shard 1: 23s
+- shard 2: 8s
+- shard 3: 3s
+- shard 4: 1s
+
+After a timing report exists, `scripts/build-shards.ts` redistributes those same tests to roughly 9s per shard. The waits are synthetic so the benefit is visible in GitHub Actions without needing a real slow application.
+
 ## How It Works
 
 1. A previous successful workflow run uploads `merged-results.json` as the `merged-json-report` artifact.
@@ -117,6 +126,8 @@ Downloads all blob reports, merges them into an HTML report and `merged-results.
 - `merged-json-report`
 
 The timing report uses a stable artifact name with `overwrite: true`, so reruns do not leave ambiguous `attempt-1`, `attempt-2`, etc. artifacts for future runs.
+
+The Playwright config pins `workers: 1` so the synthetic timings map clearly to each shard job's wall-clock duration. For a real suite, choose the worker count that matches your CI capacity.
 
 ## Retry Behavior
 
